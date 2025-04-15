@@ -14,6 +14,17 @@ import (
 
 var db *sql.DB
 
+type Entry struct {
+  StartTime time.Time
+  EndTime   time.Time
+  Note      string
+}
+
+type Sheet struct {
+  Name    string
+  Entries []Entry
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "timetick",
 	Short: "X",
@@ -85,6 +96,59 @@ func getActiveSheetId() (int64, error) {
   return id, nil
 }
 
+func getSheetsWithEntries() ([]Sheet, error) {
+  sheetsQuery := `SELECT name FROM sheets`
+  rows, err := db.Query(sheetsQuery)
+  if err != nil {
+    return nil, err
+  }
+  defer rows.Close()
+
+  var sheets []Sheet
+
+  for rows.Next() {
+    var sheet Sheet
+    if err := rows.Scan(&sheet.Name); err != nil {
+      return nil, err
+    }
+
+    entries, err := getEntriesForSheet(sheet.Name)
+    if err != nil {
+      return nil, err
+    }
+    sheet.Entries = entries
+    sheets = append(sheets, sheet)
+  }
+
+  return sheets, nil
+}
+
+func getEntriesForSheet(sheetName string) ([]Entry, error) {
+  query := `
+    SELECT start_time, end_time, note
+    FROM entries
+    JOIN sheets ON entries.sheet_id = sheets.id
+    WHERE sheets.name = ? AND end_time IS NOT NULL
+  `
+
+  rows, err := db.Query(query, sheetName)
+  if err != nil {
+    return nil, err
+  }
+  defer rows.Close()
+
+  var entries []Entry
+  for rows.Next() {
+    var entry Entry
+    if err := rows.Scan(&entry.StartTime, &entry.EndTime, &entry.Note); err != nil {
+      return nil, err
+    }
+    entries = append(entries, entry)
+  }
+
+  return entries, nil
+}
+
 var startCmd = &cobra.Command{
   Use:   "start [note]",
   Short: "Start tracking time",
@@ -108,6 +172,7 @@ var stopCmd = &cobra.Command{
   Use:   "stop",
   Short: "Stop tracking time",
   Run: func(cmd *cobra.Command, args []string) {
+    // Disable stop when there is no entry started.
     endtime := time.Now()
 
     var entryId int64
@@ -122,6 +187,93 @@ var stopCmd = &cobra.Command{
     }
 
     fmt.Printf("Stopeed tracking time with entry: %d\n", entryId)
+  },
+}
+
+func printTable(headers []string, rows [][]string, footers []string) {
+  colWidths := make([]int, len(headers))
+  for i, header := range headers {
+    colWidths[i] = len(header)
+  }
+  for _, row := range rows {
+    for i, cell := range row {
+      if len(cell) > colWidths[i] {
+        colWidths[i] = len(cell)
+      }
+    }
+  }
+
+  // Print header
+  for i, header := range headers {
+    fmt.Fprintf(os.Stdout, "%-*s\t", colWidths[i], header)
+  }
+  fmt.Fprintln(os.Stdout)
+
+  // Print rows
+  for _, row := range rows {
+    for i, cell := range row {
+      fmt.Fprintf(os.Stdout, "%-*s\t", colWidths[i], cell)
+    }
+    fmt.Fprintln(os.Stdout)
+  }
+
+  // Print footers
+  for i, footer := range footers {
+    if footer != "" {
+      fmt.Fprintf(os.Stdout, "%-*s\t", colWidths[i], footer)
+    } else {
+      // Print empty space for skipped footer
+      fmt.Fprintf(os.Stdout, "%-*s\t", colWidths[i], "")
+    }
+  }
+  fmt.Fprintln(os.Stdout)
+}
+
+func formatDuration(d time.Duration) string {
+  hours := int(d.Hours())
+  minutes := int(d.Minutes()) % 60
+  seconds := int(d.Seconds()) % 60
+
+  return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+}
+
+var displayCmd = &cobra.Command{
+  Use:   "display",
+  Short: "Asd",
+  Run: func(cmd *cobra.Command, args []string) {
+    sheets, err := getSheetsWithEntries()
+    if err != nil {
+      log.Fatalf("Error fetching sheets and entries: %v", err)
+    }
+
+    for _, sheet := range sheets {
+      fmt.Printf("Timesheet: %s\n", sheet.Name)
+      headers := []string{"Day", "Start", "End", "Duration", "Notes"}
+
+      var rows [][]string
+      totalDuration := time.Duration(0)
+
+      for _, entry := range sheet.Entries {
+        day := entry.StartTime.Format("Jan 02, 2006")
+        startTime := entry.StartTime.Format("15:04:05")
+        endTime := entry.EndTime.Format("15:04:05")
+        duration := entry.EndTime.Sub(entry.StartTime)
+        totalDuration += duration
+
+        row := []string{
+          day,
+          startTime,
+          endTime,
+          formatDuration(duration),
+          entry.Note,
+        }
+
+        rows = append(rows, row)
+      }
+
+      footers := []string{"", "", "Total:", formatDuration(totalDuration), ""}
+      printTable(headers, rows, footers)
+    }
   },
 }
 
@@ -149,6 +301,7 @@ func init() {
 	rootCmd.AddCommand(sheetCmd)
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
+	rootCmd.AddCommand(displayCmd)
 }
 
 // Run database migrations
