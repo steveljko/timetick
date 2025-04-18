@@ -96,9 +96,35 @@ func getActiveSheetId() (int64, error) {
   return id, nil
 }
 
-func getSheetsWithEntries() ([]Sheet, error) {
-  sheetsQuery := `SELECT name FROM sheets`
-  rows, err := db.Query(sheetsQuery)
+func getSheetsWithEntries(displayType string) ([]Sheet, error) {
+  now := time.Now()
+  var startTime, endTime time.Time
+
+  switch displayType {
+  case "day":
+    startTime = now.Truncate(24 * time.Hour)
+    endTime = startTime.Add(24 * time.Hour)
+  case "week":
+    startOfWeek := now.AddDate(0, 0, -int(now.Weekday()))
+    startTime = startOfWeek
+    endTime = startOfWeek.AddDate(0, 0, 7)
+  case "month":
+    startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+    endTime = startTime.AddDate(0, 1, 0)
+  case "year":
+    startTime = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
+    endTime = startTime.AddDate(1, 0, 0)
+  default:
+    return nil, fmt.Errorf("invalid display mode: %s", displayType)
+  }
+
+  sheetsQuery := `
+  SELECT DISTINCT sheets.name
+  FROM sheets
+  JOIN entries ON entries.sheet_id = sheets.id
+  WHERE entries.created_at >= ? AND entries.created_at < ?
+  `
+  rows, err := db.Query(sheetsQuery, startTime, endTime)
   if err != nil {
     return nil, err
   }
@@ -112,41 +138,32 @@ func getSheetsWithEntries() ([]Sheet, error) {
       return nil, err
     }
 
-    entries, err := getEntriesForSheet(sheet.Name)
+    entriesQuery := `
+    SELECT start_time, end_time, note
+    FROM entries
+    JOIN sheets ON entries.sheet_id = sheets.id
+    WHERE sheets.name = ? AND end_time IS NOT NULL
+    AND start_time >= ? AND start_time <= ?
+    `
+    entriesRows, err := db.Query(entriesQuery, sheet.Name, startTime, endTime)
     if err != nil {
       return nil, err
+    }
+    defer entriesRows.Close()
+
+    var entries []Entry
+    for entriesRows.Next() {
+      var entry Entry
+      if err := entriesRows.Scan(&entry.StartTime, &entry.EndTime, &entry.Note); err != nil {
+        return nil, err
+      }
+      entries = append(entries, entry)
     }
     sheet.Entries = entries
     sheets = append(sheets, sheet)
   }
 
   return sheets, nil
-}
-
-func getEntriesForSheet(sheetName string) ([]Entry, error) {
-  query := `
-    SELECT start_time, end_time, note
-    FROM entries
-    JOIN sheets ON entries.sheet_id = sheets.id
-    WHERE sheets.name = ? AND end_time IS NOT NULL
-  `
-
-  rows, err := db.Query(query, sheetName)
-  if err != nil {
-    return nil, err
-  }
-  defer rows.Close()
-
-  var entries []Entry
-  for rows.Next() {
-    var entry Entry
-    if err := rows.Scan(&entry.StartTime, &entry.EndTime, &entry.Note); err != nil {
-      return nil, err
-    }
-    entries = append(entries, entry)
-  }
-
-  return entries, nil
 }
 
 var startCmd = &cobra.Command{
@@ -238,12 +255,17 @@ func formatDuration(d time.Duration) string {
 }
 
 var displayCmd = &cobra.Command{
-  Use:   "display",
+  Use:   "display [type]",
   Short: "Asd",
   Run: func(cmd *cobra.Command, args []string) {
-    sheets, err := getSheetsWithEntries()
+    displayType := "day"
+    if len(args) > 0 {
+      displayType = args[0]
+    }
+
+    sheets, err := getSheetsWithEntries(displayType)
     if err != nil {
-      log.Fatalf("Error fetching sheets and entries: %v", err)
+      log.Fatalf("Error fetching sheets with entries: %v", err)
     }
 
     for _, sheet := range sheets {
@@ -253,6 +275,7 @@ var displayCmd = &cobra.Command{
       var rows [][]string
       totalDuration := time.Duration(0)
 
+      var lastDay string
       for _, entry := range sheet.Entries {
         day := entry.StartTime.Format("Jan 02, 2006")
         startTime := entry.StartTime.Format("15:04:05")
@@ -260,15 +283,28 @@ var displayCmd = &cobra.Command{
         duration := entry.EndTime.Sub(entry.StartTime)
         totalDuration += duration
 
-        row := []string{
-          day,
-          startTime,
-          endTime,
-          formatDuration(duration),
-          entry.Note,
-        }
+        if day != lastDay {
+          row := []string{
+            day,
+            startTime,
+            endTime,
+            formatDuration(duration),
+            entry.Note,
+          }
 
-        rows = append(rows, row)
+          rows = append(rows, row)
+          lastDay = day
+        } else {
+          row := []string{
+            "",
+            startTime,
+            endTime,
+            formatDuration(duration),
+            entry.Note,
+          }
+
+          rows = append(rows, row)
+        }
       }
 
       footers := []string{"", "", "Total:", formatDuration(totalDuration), ""}
