@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+  "bufio"
+  "strings"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
@@ -169,19 +171,21 @@ func getSheetsWithEntries(displayType string) ([]Sheet, error) {
 var startCmd = &cobra.Command{
   Use:   "start [note]",
   Short: "Start tracking time",
-  Args:  cobra.ExactArgs(1),
   Run: func(cmd *cobra.Command, args []string) {
-    note := args[0]
-    startTime := time.Now()
+    var note string
+    if len(args) > 0 {
+      note = args[0]
+    }
 
     id, _ := getActiveSheetId()
+    startTime := time.Now()
 
     _, err := db.Exec("INSERT INTO entries (sheet_id, start_time, note) VALUES (?, ?, ?)", id, startTime, note)
     if err != nil {
       log.Fatal(err)
     }
 
-    fmt.Printf("Started tracking time with note: %s at %s\n", note, startTime)
+    fmt.Println("Started tracking time...")
   },
 }
 
@@ -193,17 +197,30 @@ var stopCmd = &cobra.Command{
     endtime := time.Now()
 
     var entryId int64
-    err := db.QueryRow("SELECT id FROM entries WHERE end_time IS NULL").Scan(&entryId)
+    var note string
+    err := db.QueryRow("SELECT id, note FROM entries WHERE end_time IS NULL").Scan(&entryId, &note)
     if err != nil {
       log.Fatalf("Error finding entry without end time: %v", err)
     }
 
-    _, err = db.Exec("UPDATE entries SET end_time = ? WHERE id = ?", endtime, entryId)
-    if err != nil {
-      log.Fatalf("Error while updating end time to entry: %v", err)
+    if note != "" {
+      _, err = db.Exec("UPDATE entries SET end_time = ? WHERE id = ?", endtime, entryId)
+      if err != nil {
+        log.Fatalf("Error while updating end time to entry: %v", err)
+      }
+    } else {
+      reader := bufio.NewReader(os.Stdin)
+      fmt.Print("Enter a note (press Enter to skip): ")
+      note, _ := reader.ReadString('\n')
+      note = strings.TrimSpace(note)
+
+      _, err = db.Exec("UPDATE entries SET end_time = ?, note = ? WHERE id = ?", endtime, note, entryId)
+      if err != nil {
+        log.Fatalf("Error while updating end time to entry: %v", err)
+      }
     }
 
-    fmt.Printf("Stopeed tracking time with entry: %d\n", entryId)
+    fmt.Println("Tracking stopped!")
   },
 }
 
