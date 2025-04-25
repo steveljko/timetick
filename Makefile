@@ -8,7 +8,7 @@ all: build
 build: $(GO_FILES)
 	@echo "Building the application..."
 	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(APP_NAME) $(SRC)
+	go build -o $(BUILD_DIR)/$(APP_NAME) *.go
 
 clean:
 	@echo "Cleaning up..."
