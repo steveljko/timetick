@@ -33,9 +33,16 @@ const (
   )`
 
 	// sheet queries
-	createSheetSQL         = `INSERT INTO sheets (name) VALUES (?)`
-	getAllSheetsSQL        = `SELECT name FROM sheets`
-	getActiveSheetIdSQL    = `SELECT id FROM sheets WHERE active = 1`
+	createSheetSQL          = `INSERT INTO sheets (name) VALUES (?)`
+	getAllSheetsSQL         = `SELECT name FROM sheets`
+	getActiveSheetIdSQL     = `SELECT id FROM sheets WHERE active = 1`
+	getSheetsWithEntriesSQL = `
+  SELECT s.name, e.start_time, e.end_time, e.note
+  FROM sheets s
+  JOIN entries e ON e.sheet_id = s.id
+  WHERE e.start_time >= ? AND e.start_time <= ? AND e.end_time IS NOT NULL
+  ORDER BY s.name
+  `
 	checkSheetExistsSQL    = `SELECT EXISTS(SELECT 1 FROM sheets WHERE name = ?)`
 	activateSheetByNameSQL = `UPDATE sheets SET active = 1 WHERE name = ?`
 	deactivateAllSheetsSQL = `UPDATE sheets SET active = 0`
@@ -186,49 +193,35 @@ func (r *Repo) GetActiveSheetID() (int64, error) {
 }
 
 // get all sheets with their entries
-// TODO: refactor this
 func (r *Repo) GetSheetsWithEntries(startTime, endTime time.Time) ([]Sheet, error) {
-	rows, err := r.db.Query(`
-        SELECT DISTINCT sheets.name
-        FROM sheets
-        JOIN entries ON entries.sheet_id = sheets.id
-        WHERE entries.created_at >= ? AND entries.created_at < ?
-    `, startTime, endTime)
+	rows, err := r.db.Query(getSheetsWithEntriesSQL, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var sheets []Sheet
+	sheetMap := make(map[string]*Sheet)
 
 	for rows.Next() {
-		var sheet Sheet
-		if err := rows.Scan(&sheet.Name); err != nil {
+		var sheetName string
+		var entry Entry
+
+		if err := rows.Scan(&sheetName, &entry.StartTime, &entry.EndTime, &entry.Note); err != nil {
 			return nil, err
 		}
 
-		entriesRows, err := r.db.Query(`
-            SELECT start_time, end_time, note
-            FROM entries
-            JOIN sheets ON entries.sheet_id = sheets.id
-            WHERE sheets.name = ? AND end_time IS NOT NULL
-            AND start_time >= ? AND start_time <= ?
-        `, sheet.Name, startTime, endTime)
-		if err != nil {
-			return nil, err
+		sheet, exists := sheetMap[sheetName]
+		if !exists {
+			sheet = &Sheet{Name: sheetName}
+			sheetMap[sheetName] = sheet
 		}
-		defer entriesRows.Close()
 
-		var entries []Entry
-		for entriesRows.Next() {
-			var entry Entry
-			if err := entriesRows.Scan(&entry.StartTime, &entry.EndTime, &entry.Note); err != nil {
-				return nil, err
-			}
-			entries = append(entries, entry)
-		}
-		sheet.Entries = entries
-		sheets = append(sheets, sheet)
+		sheet.Entries = append(sheet.Entries, entry)
+	}
+
+	sheets := make([]Sheet, 0, len(sheetMap))
+	for _, sheet := range sheetMap {
+		sheets = append(sheets, *sheet)
 	}
 
 	return sheets, nil
@@ -259,7 +252,6 @@ func (r *Repo) HasActiveEntryNote() bool {
 	return note != ""
 }
 
-// fix: take a loook at this
 func (r *Repo) UpdateEntry(endTime time.Time, note string) error {
 	var entryID int64
 	var existingNote string
@@ -269,7 +261,7 @@ func (r *Repo) UpdateEntry(endTime time.Time, note string) error {
 		return fmt.Errorf("error finding entry without end time: %w", err)
 	}
 
-	// use provided note if the existing note is empty
+	// use provided note param if the existing note is empty
 	updateNote := existingNote
 	if existingNote == "" && note != "" {
 		updateNote = note

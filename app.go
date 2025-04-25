@@ -65,3 +65,82 @@ func (a *App) StopTracking(note string) error {
 	fmt.Println("Tracking stopped!")
 	return nil
 }
+
+func (a *App) Display(displayType string) error {
+	now := time.Now()
+	var startTime, endTime time.Time
+
+	switch displayType {
+	case "day":
+		startTime = now.Truncate(24 * time.Hour)
+		endTime = startTime.Add(24 * time.Hour)
+	case "week":
+		startOfWeek := now.AddDate(0, 0, -int(now.Weekday())+1)
+		if now.Weekday() == time.Sunday {
+			startOfWeek = startOfWeek.AddDate(0, 0, -6)
+		}
+		startTime = startOfWeek
+		endTime = startOfWeek.AddDate(0, 0, 7)
+	case "month":
+		startTime = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		endTime = startTime.AddDate(0, 1, 0)
+	case "year":
+		startTime = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
+		endTime = startTime.AddDate(1, 0, 0)
+	default:
+		return fmt.Errorf("Invalid display mode: %s", displayType)
+	}
+
+	sheets, err := a.repo.GetSheetsWithEntries(startTime, endTime)
+	if err != nil {
+		fmt.Errorf("a %v", err)
+	}
+	for _, sheet := range sheets {
+		fmt.Printf("Sheet - %s\n", sheet.Name)
+
+		headers := []string{"Day", "Start", "End", "Duration", "Notes"}
+
+		var rows [][]string
+		totalDuration := time.Duration(0)
+
+		var lastDay string
+		for _, entry := range sheet.Entries {
+			day := entry.StartTime.Format("Jan 02, 2006")
+			startTime := entry.StartTime.Format("15:04:05")
+			endTime := entry.EndTime.Format("15:04:05")
+			duration := entry.EndTime.Sub(entry.StartTime)
+			totalDuration += duration
+
+			if day != lastDay {
+				row := []string{
+					day,
+					startTime,
+					endTime,
+					FormatDuration(duration),
+					entry.Note,
+				}
+
+				rows = append(rows, row)
+				lastDay = day
+			} else {
+				row := []string{
+					"",
+					startTime,
+					endTime,
+					FormatDuration(duration),
+					entry.Note,
+				}
+
+				rows = append(rows, row)
+			}
+		}
+
+		footers := []string{"", "", "Total:", FormatDuration(totalDuration), ""}
+		PrintTable(headers, rows, footers)
+
+		fmt.Println()
+		fmt.Println()
+	}
+
+	return nil
+}

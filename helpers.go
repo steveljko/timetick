@@ -8,9 +8,12 @@ import (
 
 func PrintTable(headers []string, rows [][]string, footers []string) {
 	colWidths := make([]int, len(headers))
+
+	// calc initial column width using header width
 	for i, header := range headers {
 		colWidths[i] = len(header)
 	}
+	// if cell is grather than column width, make it cell width
 	for _, row := range rows {
 		for i, cell := range row {
 			if len(cell) > colWidths[i] {

@@ -58,11 +58,25 @@ func SetupCommands(a *App) *cobra.Command {
 		},
 	}
 
+	displayCmd := &cobra.Command{
+		Use:       "display [period]",
+		Short:     "Display all entries in period or specific sheet",
+		ValidArgs: []string{"day", "week", "month", "year"},
+		Run: func(cmd *cobra.Command, args []string) {
+			period := "day"
+			if len(args) > 0 {
+				period = args[0]
+			}
+
+			a.Display(period)
+		},
+	}
+
 	// add commands
 	rootCmd.AddCommand(sheetCmd)
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
-	// TODO: add display command
+	rootCmd.AddCommand(displayCmd)
 
 	return rootCmd
 }
