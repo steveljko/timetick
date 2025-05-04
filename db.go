@@ -49,6 +49,7 @@ const (
 
 	// entry queries
 	createEntrySQL               = `INSERT INTO entries (sheet_id, start_time, note) VALUES (?, ?, ?)`
+	createFullEntrySQL           = `INSERT INTO entries(sheet_id, start_time, end_time, note) VALUES (?, ?, ?, ?)`
 	getTrackingEntrySQL          = `SELECT id, note FROM entries WHERE end_time IS NULL`
 	checkEntryHasNoteSQL         = `SELECT note FROM entries WHERE end_time IS NULL LIMIT 1`
 	updateEntryEndTimeAndNoteSQL = `UPDATE entries SET end_time = ?, note = ? WHERE id = ?`
@@ -250,6 +251,12 @@ func (r *Repo) HasActiveEntryNote() bool {
 	}
 
 	return note != ""
+}
+
+// creates full entry in database (used for importing from telegram bot)
+func (r *Repo) CreateFullEntry(startTime time.Time, endTime sql.NullTime, note string) error {
+	_, err := r.db.Exec(createFullEntrySQL, 1, startTime, endTime, note)
+	return err
 }
 
 func (r *Repo) UpdateEntry(endTime time.Time, note string) error {

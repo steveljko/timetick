@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -143,4 +144,38 @@ func (a *App) Display(displayType string) error {
 	}
 
 	return nil
+}
+
+func (a *App) Import(url string) (string, error) {
+	apiClient := NewAPIClient(url)
+
+	var IDs []int64
+
+	unimportedEntries, err := apiClient.GetUnimportedEntries()
+	if err != nil {
+		return "", err
+	}
+
+	for _, entry := range unimportedEntries {
+		var endTime sql.NullTime
+		if entry.EndTime.Valid {
+			endTime = sql.NullTime{
+				Time:  entry.EndTime.Time,
+				Valid: true,
+			}
+		} else {
+			endTime = sql.NullTime{Valid: false}
+		}
+
+		err := a.repo.CreateFullEntry(entry.StartTime, endTime, entry.Note)
+		if err != nil {
+			return "", err
+		}
+
+		IDs = append(IDs, int64(entry.ID))
+	}
+
+	msg, err := apiClient.MarkEntriesAsImported(IDs)
+
+	return msg, nil
 }

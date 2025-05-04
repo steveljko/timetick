@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -72,11 +74,28 @@ func SetupCommands(a *App) *cobra.Command {
 		},
 	}
 
+	importCmd := &cobra.Command{
+		Use:   "import [url]",
+		Short: "Import trackings from external sources (Telegram BOT)",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			url := args[0]
+
+			msg, err := a.Import(url)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			fmt.Println(msg)
+		},
+	}
+
 	// add commands
 	rootCmd.AddCommand(sheetCmd)
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(displayCmd)
+	rootCmd.AddCommand(importCmd)
 
 	return rootCmd
 }
