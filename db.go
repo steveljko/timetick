@@ -35,6 +35,7 @@ const (
 	// sheet queries
 	createSheetSQL          = `INSERT INTO sheets (name) VALUES (?)`
 	getAllSheetsSQL         = `SELECT name FROM sheets`
+	getSheetIdByNameSQL     = `SELECT id FROM sheets WHERE name = ?`
 	getActiveSheetIdSQL     = `SELECT id FROM sheets WHERE active = 1`
 	getSheetsWithEntriesSQL = `
   SELECT s.name, e.start_time, e.end_time, e.note
@@ -156,6 +157,21 @@ func (r *Repo) GetAllSheets() ([]string, error) {
 	return sheets, nil
 }
 
+// gets sheet id by provided name
+func (r *Repo) GetSheetIdByName(name string) (int64, error) {
+	var id int64
+
+	err := r.db.QueryRow(getSheetIdByNameSQL, name).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("no sheet found with name: %s", name)
+		}
+		return 0, fmt.Errorf("error getting sheet id: %w", err)
+	}
+
+	return id, nil
+}
+
 // set active sheet by name
 func (r *Repo) SetActiveSheet(name string) error {
 	tx, err := r.db.Begin()
@@ -254,8 +270,12 @@ func (r *Repo) HasActiveEntryNote() bool {
 }
 
 // creates full entry in database (used for importing from telegram bot)
-func (r *Repo) CreateFullEntry(startTime time.Time, endTime sql.NullTime, note string) error {
-	_, err := r.db.Exec(createFullEntrySQL, 1, startTime, endTime, note)
+func (r *Repo) CreateFullEntry(sheetName string, startTime time.Time, endTime sql.NullTime, note string) error {
+	sheetId, err := r.GetSheetIdByName(sheetName)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.Exec(createFullEntrySQL, sheetId, startTime, endTime, note)
 	return err
 }
 

@@ -167,7 +167,11 @@ func (a *App) Import(url string) (string, error) {
 			endTime = sql.NullTime{Valid: false}
 		}
 
-		err := a.repo.CreateFullEntry(entry.StartTime, endTime, entry.Note)
+		formattedString := fmt.Sprintf("Importing entry\nStart time: %s\nEnd time: %s\nNote: %s", entry.StartTime.Format("15:04:05"), entry.EndTime.Time.Format("15:04:05"), entry.Note)
+		sheets, _ := a.repo.GetAllSheets()
+		sheetName, err := SelectFromOptions(formattedString, sheets)
+
+		err = a.repo.CreateFullEntry(sheetName, entry.StartTime, endTime, entry.Note)
 		if err != nil {
 			return "", err
 		}
