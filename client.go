@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -62,6 +64,12 @@ func (c *APIClient) GetUnimportedEntries() ([]APIEntry, error) {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
+	apiToken := os.Getenv("API_TOKEN")
+	if apiToken == "" {
+		log.Fatal("API_TOKEN environment variable is required")
+	}
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", apiToken))
+
 	res, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error making request: %w", err)
@@ -118,6 +126,12 @@ func (c *APIClient) MarkEntriesAsImported(entryIDs []int64) (string, error) {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	apiToken := os.Getenv("API_TOKEN")
+	if apiToken == "" {
+		log.Fatal("API_TOKEN environment variable is required")
+	}
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", apiToken))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
