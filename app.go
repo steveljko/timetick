@@ -167,9 +167,15 @@ func (a *App) Import(url string) (string, error) {
 			endTime = sql.NullTime{Valid: false}
 		}
 
-		formattedString := fmt.Sprintf("Importing entry\nStart time: %s\nEnd time: %s\nNote: %s", entry.StartTime.Format("15:04:05"), entry.EndTime.Time.Format("15:04:05"), entry.Note)
 		sheets, _ := a.repo.GetAllSheets()
-		sheetName, err := SelectFromOptions(formattedString, sheets)
+
+		menu := NewMenu(fmt.Sprintf("Start time: %s\nEnd time: %s\nNote: %s", entry.StartTime.Format("2006-01-02 15:04:05"), entry.EndTime.Time.Format("2006-01-02 15:04:05"), entry.Note))
+
+		for _, sheet := range sheets {
+			menu.AddItem(sheet, sheet)
+		}
+
+		sheetName, _ := menu.Display()
 
 		err = a.repo.CreateFullEntry(sheetName, entry.StartTime, endTime, entry.Note)
 		if err != nil {

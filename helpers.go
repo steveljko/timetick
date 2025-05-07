@@ -1,14 +1,18 @@
 package main
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
-	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	pkgterm "github.com/pkg/term"
+	xterm "golang.org/x/term"
 )
 
 // +-------------+
@@ -58,70 +62,14 @@ func PrintTable(headers []string, rows [][]string, footers []string) {
 	fmt.Fprintln(os.Stdout)
 }
 
-// +----------------+
-// |                |
-// |    Selector    |
-// |                |
-// +----------------+
-type (
-	SelectOption struct {
-		Value string
-		Label string
-	}
+// converts duration value into a formatted string
+// in the format "hours:minutes:seconds" (H:MM:SS).
+func FormatDuration(d time.Duration) string {
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
 
-	TerminalSelector struct {
-		Title   string
-		Options []SelectOption
-	}
-)
-
-func NewTerminalSelector(title string, options []SelectOption) *TerminalSelector {
-	return &TerminalSelector{
-		Title:   title,
-		Options: options,
-	}
-}
-
-// select displays the selection menu and returns the value of the selected option
-func (s *TerminalSelector) Select() (string, error) {
-	reader := bufio.NewReader(os.Stdin)
-	clearScreen()
-
-	// display title and options with index
-	fmt.Println(s.Title)
-	fmt.Println()
-
-	for i, option := range s.Options {
-		fmt.Printf("%d. %s\n", i+1, option.Label)
-	}
-
-	// prompt user
-	fmt.Println("\nUse number keys (1-" + strconv.Itoa(len(s.Options)) + ") to select an option")
-	fmt.Print("\nYour selection: ")
-
-	for {
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("error reading input: %w", err)
-		}
-
-		input = strings.TrimSpace(input)
-
-		if input == "" {
-			fmt.Print("Please make a selection (1-" + strconv.Itoa(len(s.Options)) + "): ")
-			continue
-		}
-
-		selection, err := strconv.Atoi(input)
-		if err != nil || selection < 1 || selection > len(s.Options) {
-			fmt.Print("Invalid selection. Please enter a number (1-" + strconv.Itoa(len(s.Options)) + "): ")
-			continue
-		}
-
-		clearScreen()
-
-		return s.Options[selection-1].Value, nil
-	}
+	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 }
 
 // clears terminal screen
@@ -139,26 +87,194 @@ func clearScreen() {
 	_ = cmd.Run()
 }
 
-// prompts user in terminal to select option and returns the selected value.
-func SelectFromOptions(title string, values []string) (string, error) {
-	options := make([]SelectOption, len(values))
-	for i, value := range values {
-		options[i] = SelectOption{
-			Value: value,
-			Label: value,
-		}
-	}
+// +--------------+
+// |              |
+// |    Select    |
+// |              |
+// +--------------+
+// This code is adapted from https://github.com/Nexidian/gocliselect
+// The only differences are that it has no colors and supports a multiline prompt
 
-	selector := NewTerminalSelector(title, options)
-	return selector.Select()
+// Control sequences for terminal
+const (
+	HideCursor     = "\033[?25l"
+	ShowCursor     = "\033[?25h"
+	ClearLine      = "\033[2K"
+	CursorUpFormat = "\033[%dA"
+)
+
+// Key codes
+const (
+	KeyEnter  = 13
+	KeyEscape = 27
+	KeyUp     = 65
+	KeyDown   = 66
+)
+
+// NavigationKeys maps the byte values of navigation keys
+var NavigationKeys = map[byte]bool{
+	KeyUp:   true,
+	KeyDown: true,
 }
 
-// converts duration value into a formatted string
-// in the format "hours:minutes:seconds" (H:MM:SS).
-func FormatDuration(d time.Duration) string {
-	hours := int(d.Hours())
-	minutes := int(d.Minutes()) % 60
-	seconds := int(d.Seconds()) % 60
+type Menu struct {
+	Prompt       string
+	CursorPos    int
+	ScrollOffset int
+	MenuItems    []*MenuItem
+}
 
-	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+type MenuItem struct {
+	Text    string
+	ID      string
+	SubMenu *Menu
+}
+
+func NewMenu(prompt string) *Menu {
+	return &Menu{
+		Prompt:    prompt,
+		MenuItems: make([]*MenuItem, 0),
+	}
+}
+
+// AddItem will add a new menu option to the menu list
+func (m *Menu) AddItem(option string, id string) *Menu {
+	menuItem := &MenuItem{
+		Text: fmt.Sprintf("%s", option),
+		ID:   id,
+	}
+
+	m.MenuItems = append(m.MenuItems, menuItem)
+	return m
+}
+
+// renderMenuItems prints the menu item list.
+// Setting redraw to true will re-render the options list with updated current selection.
+func (m *Menu) renderMenuItems(redraw bool) {
+	_, height, err := xterm.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		fmt.Println("Error getting terminal size:", err)
+		return
+	}
+	termHeight := height - 3 // Space for prompt and cursor movement
+	menuSize := len(m.MenuItems)
+
+	// Ensure scroll offset follows cursor movement
+	if m.CursorPos < m.ScrollOffset {
+		m.ScrollOffset = m.CursorPos
+	} else if m.CursorPos >= m.ScrollOffset+termHeight {
+		m.ScrollOffset = m.CursorPos - termHeight + 1
+	}
+
+	if redraw {
+		// Move the cursor up n lines where n is the number of visible options
+		fmt.Printf(CursorUpFormat, min(menuSize, termHeight))
+	}
+
+	// Render only visible menu items
+	for i := m.ScrollOffset; i < min(m.ScrollOffset+termHeight, menuSize); i++ {
+		menuItem := m.MenuItems[i]
+		cursor := "  "
+
+		fmt.Print(ClearLine)
+
+		if i == m.CursorPos {
+			cursor = "> "
+		}
+
+		fmt.Printf("\r%s%s\n", cursor, menuItem.Text)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Display will display the current menu options and awaits user selection
+// It returns the user's selected choice as a string
+func (m *Menu) Display() (string, error) {
+	defer func() {
+		// Show cursor again.
+		fmt.Printf(ShowCursor)
+	}()
+
+	if len(m.MenuItems) == 0 {
+		return "", errors.New("menu has no items to display")
+	}
+
+	// Print the multiline prompt
+	lines := strings.Split(m.Prompt, "\n")
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	fmt.Println() // Extra line after prompt
+
+	m.renderMenuItems(false)
+
+	fmt.Printf(HideCursor)
+
+	// Channel to signal interrupt
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, os.Interrupt, syscall.SIGTERM)
+
+	for {
+		select {
+		case <-interruptChan:
+			return "", nil
+		default:
+			keyCode := getInput()
+			switch keyCode {
+			case KeyEscape:
+				return "", nil
+			case KeyEnter:
+				menuItem := m.MenuItems[m.CursorPos]
+				fmt.Println("\r")
+				// Convert ID to string
+				return fmt.Sprintf("%v", menuItem.ID), nil
+			case KeyUp:
+				m.CursorPos = (m.CursorPos + len(m.MenuItems) - 1) % len(m.MenuItems)
+				m.renderMenuItems(true)
+			case KeyDown:
+				m.CursorPos = (m.CursorPos + 1) % len(m.MenuItems)
+				m.renderMenuItems(true)
+			}
+		}
+	}
+}
+
+// getInput will read raw input from the terminal
+// It returns the raw ASCII value inputted
+func getInput() byte {
+	t, err := pkgterm.Open("/dev/tty")
+	if err != nil {
+		return 0
+	}
+	defer t.Close()
+
+	err = pkgterm.RawMode(t)
+	if err != nil {
+		return 0
+	}
+	defer t.Restore() // Restore terminal mode
+
+	readBytes := make([]byte, 3)
+	read, err := t.Read(readBytes)
+	if err != nil {
+		return 0
+	}
+
+	// Arrow keys are prefixed with the ANSI escape code
+	// For example the up arrow key is '<esc>[A' while the down is '<esc>[B'
+	if read == 3 && readBytes[0] == KeyEscape && readBytes[1] == '[' {
+		if _, ok := NavigationKeys[readBytes[2]]; ok {
+			return readBytes[2]
+		}
+	} else if read >= 1 {
+		return readBytes[0]
+	}
+
+	return 0
 }
