@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/nexidian/gocliselect"
 )
 
 func (a *App) ChangeSheet(name string) error {
@@ -169,15 +171,21 @@ func (a *App) Import(url string) (string, error) {
 
 		sheets, _ := a.repo.GetAllSheets()
 
-		menu := NewMenu(fmt.Sprintf("Start time: %s\nEnd time: %s\nNote: %s", entry.StartTime.Format("2006-01-02 15:04:05"), entry.EndTime.Time.Format("2006-01-02 15:04:05"), entry.Note))
+		menu := gocliselect.NewMenu(fmt.Sprintf("Start time: %s\nEnd time: %s\nNote: %s", entry.StartTime.Format("2006-01-02 15:04:05"), entry.EndTime.Time.Format("2006-01-02 15:04:05"), entry.Note))
 
 		for _, sheet := range sheets {
 			menu.AddItem(sheet, sheet)
 		}
 
+		menu.EnableSkip(nil)
+
 		sheetName, _ := menu.Display()
 
-		err = a.repo.CreateFullEntry(sheetName, entry.StartTime, endTime, entry.Note)
+		if sheetName == nil {
+			continue
+		}
+
+		err = a.repo.CreateFullEntry(sheetName.(string), entry.StartTime, endTime, entry.Note)
 		if err != nil {
 			return "", err
 		}
