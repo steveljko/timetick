@@ -158,7 +158,7 @@ func (a *App) Import(url string) (string, error) {
 		return "", err
 	}
 
-	for _, entry := range unimportedEntries {
+	for i, entry := range unimportedEntries {
 		var endTime sql.NullTime
 		if entry.EndTime.Valid {
 			endTime = sql.NullTime{
@@ -177,7 +177,11 @@ func (a *App) Import(url string) (string, error) {
 			menu.AddItem(sheet, sheet)
 		}
 
-		menu.EnableSkip(nil)
+		if i == len(unimportedEntries)-1 {
+			menu.EnableSkip("skip and exit")
+		} else {
+			menu.EnableSkip("skip and go to next")
+		}
 
 		sheetName, _ := menu.Display()
 

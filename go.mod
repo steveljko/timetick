@@ -16,4 +16,4 @@ require (
 	golang.org/x/sys v0.33.0 // indirect
 )
 
-replace github.com/nexidian/gocliselect => github.com/steveljko/gocliselect v1.0.1
+replace github.com/nexidian/gocliselect => github.com/steveljko/gocliselect v1.0.2
